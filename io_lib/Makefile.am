@@ -100,8 +100,6 @@ libstaden_read_la_SOURCES = \
 	sam_header.h \
 	sam_header.c \
 	cram.h \
-	arith_static.c \
-	arith_static.h \
 	rANS_static.c \
 	rANS_static.h \
 	cram_codecs.c \
@@ -125,11 +123,15 @@ libstaden_read_la_SOURCES = \
 	string_alloc.h \
 	md5.c \
 	md5.h \
+	crc32.c \
+	crc32.h \
 	scram.c \
 	scram.h \
 	thread_pool.c \
 	thread_pool.h \
-	binning.h
+	binning.h \
+	binning.c \
+	cram_bambam.c
 
 libstaden_read_la_CPPFLAGS = @LIBCURL_CPPFLAGS@
 

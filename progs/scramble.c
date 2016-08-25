@@ -49,7 +49,7 @@
 #include <ctype.h>
 #include <errno.h>
 
-#if defined(__MINGW32__) || defined(__FreeBSD__)
+#if defined(__MINGW32__) || defined(__FreeBSD__) || defined(__APPLE__)
 #   include <getopt.h>
 #endif
 
@@ -88,18 +88,21 @@ static char *detect_format(char *fn) {
 
 static void usage(FILE *fp) {
     fprintf(fp, "  -=- sCRAMble -=-     version %s\n", PACKAGE_VERSION);
-    fprintf(fp, "Author: James Bonfield, Wellcome Trust Sanger Institute. 2013\n\n");
+    fprintf(fp, "Author: James Bonfield, Wellcome Trust Sanger Institute. 2013-2015\n\n");
 
     fprintf(fp, "Usage:    scramble [options] [input_file [output_file]]\n");
 
     fprintf(fp, "Options:\n");
     fprintf(fp, "    -I format      Set input format:  \"bam\", \"sam\" or \"cram\".\n");
     fprintf(fp, "    -O format      Set output format: \"bam\", \"sam\" or \"cram\".\n");
-    fprintf(fp, "    -1 to -9       Set zlib compression level.\n");
-    fprintf(fp, "    -0 or -u       No zlib compression.\n");
+    fprintf(fp, "    -1 to -9       Set compression level.\n");
+    fprintf(fp, "    -0 or -u       No compression.\n");
     //fprintf(fp, "    -v             Verbose output.\n");
+    fprintf(fp, "    -H             [SAM] Do not print header\n");
     fprintf(fp, "    -R range       [Cram] Specifies the refseq:start-end range\n");
     fprintf(fp, "    -r ref.fa      [Cram] Specifies the reference file.\n");
+    fprintf(fp, "    -b integer     [Cram] Max. bases per slice, default %d.\n",
+	    BASES_PER_SLICE);
     fprintf(fp, "    -s integer     [Cram] Sequences per slice, default %d.\n",
 	    SEQS_PER_SLICE);
     fprintf(fp, "    -S integer     [Cram] Slices per container, default %d.\n",
@@ -110,10 +113,18 @@ static void usage(FILE *fp) {
     fprintf(fp, "    -M             [Cram] Use multiple references per slice.\n");
     fprintf(fp, "    -m             [Cram] Generate MD and NM tags.\n");
 #ifdef HAVE_LIBBZ2
-    fprintf(fp, "    -j             [Cram] Compress using bzip2.\n");
+    fprintf(fp, "    -j             [Cram] Also compress using bzip2.\n");
 #endif
+#ifdef HAVE_LIBLZMA
+    fprintf(fp, "    -Z             [Cram] Also compress using lzma.\n");
+#endif
+    fprintf(fp, "    -n             [Cram] Discard read names where possible.\n");
+    fprintf(fp, "    -P             [Cram EXPERIMENTAL] Preserve all aux tags (incl RG,NM,MD)\n");
+    fprintf(fp, "    -p             [Cram EXPERIMENTAL] Preserve aux tag sizes ('i', 's', 'c')\n");
+    fprintf(fp, "    -N integer     Stop decoding after 'integer' sequences\n");
     fprintf(fp, "    -t N           Use N threads (availability varies by format)\n");
     fprintf(fp, "    -B             Enable Illumina 8 quality-binning system (lossy)\n");
+    fprintf(fp, "    -!             Disable all checking of checksums\n");
 }
 
 int main(int argc, char **argv) {
@@ -125,17 +136,27 @@ int main(int argc, char **argv) {
     int s_opt = 0, S_opt = 0, embed_ref = 0, ignore_md5 = 0, decode_md = 0;
     char *ref_fn = NULL;
     int start, end, multi_seq = -1, no_ref = 0;
-    int use_bz2 = 0, use_arith = 0, use_lzma = 0;
+    int use_bz2 = 0, use_rans = 0, use_lzma = 0;
     char ref_name[1024] = {0};
     refs_t *refs;
     int nthreads = 1;
     t_pool *p = NULL;
     int max_reads = -1;
     enum quality_binning binning = BINNING_NONE;
+    int sam_fields = 0; // all
+    int header = 1;
+    int bases_per_slice = 0;
+    int lossy_read_names = 0;
+    int preserve_aux_order = 0;
+    int preserve_aux_size = 0;
 
     /* Parse command line arguments */
-    while ((c = getopt(argc, argv, "u0123456789hvs:S:V:r:xXeI:O:R:!MmjJZt:BN:")) != -1) {
+    while ((c = getopt(argc, argv, "u0123456789hvs:S:V:r:xXeI:O:R:!MmjJZt:BN:F:Hb:nPp")) != -1) {
 	switch (c) {
+	case 'F':
+	    sam_fields = strtol(optarg, NULL, 0); // undocumented for testing
+	    break;
+
 	case '0': case '1': case '2': case '3': case '4':
 	case '5': case '6': case '7': case '8': case '9':
 	    level = c;
@@ -149,12 +170,21 @@ int main(int argc, char **argv) {
 	    usage(stdout);
 	    return 0;
 
+	case 'H':
+	    header = 0;
+	    break;
+
 	case 'v':
 	    verbose++;
 	    break;
 
 	case 's':
 	    s_opt = atoi(optarg);
+	    bases_per_slice = s_opt * 500; // guesswork...
+	    break;
+
+	case 'b':
+	    bases_per_slice = atoi(optarg);
 	    break;
 
 	case 'S':
@@ -218,6 +248,10 @@ int main(int argc, char **argv) {
 	    ignore_md5 = 1;
 	    break;
 
+	case 'n':
+	    lossy_read_names = 1;
+	    break;
+
 	case 'M':
 	    multi_seq = 1;
 	    break;
@@ -232,7 +266,7 @@ int main(int argc, char **argv) {
 	    break;
 
 	case 'J':
-	    use_arith = 1;
+	    use_rans = 1;
 	    break;
 
 	case 'Z':
@@ -256,7 +290,15 @@ int main(int argc, char **argv) {
 	    binning = BINNING_ILLUMINA;
 	    break;
 
-	case 'N': // For debugging
+	case 'P':
+	    preserve_aux_order = 1;
+	    break;
+
+	case 'p':
+	    preserve_aux_size = 1;
+	    break;
+
+	case 'N':
 	    max_reads = atoi(optarg);
 	    break;
 
@@ -326,6 +368,10 @@ int main(int argc, char **argv) {
 	if (scram_set_option(out, CRAM_OPT_SLICES_PER_CONTAINER, S_opt))
 	    return 1;
 
+    if (bases_per_slice)
+	if (scram_set_option(out, CRAM_OPT_BASES_PER_SLICE, bases_per_slice))
+	    return 1;
+
     if (embed_ref)
 	if (scram_set_option(out, CRAM_OPT_EMBED_REF, embed_ref))
 	    return 1;
@@ -334,8 +380,8 @@ int main(int argc, char **argv) {
 	if (scram_set_option(out, CRAM_OPT_USE_BZIP2, use_bz2))
 	    return 1;
 
-    if (use_arith)
-	if (scram_set_option(out, CRAM_OPT_USE_ARITH, use_arith))
+    if (use_rans)
+	if (scram_set_option(out, CRAM_OPT_USE_RANS, use_rans))
 	    return 1;
 
     if (use_lzma)
@@ -373,10 +419,30 @@ int main(int argc, char **argv) {
 	    return 1;
     }
 
-    if (ignore_md5)
+    if (ignore_md5) {
 	if (scram_set_option(in, CRAM_OPT_IGNORE_MD5, ignore_md5))
 	    return 1;
+	if (scram_set_option(in, CRAM_OPT_IGNORE_CHKSUM, ignore_md5))
+	    return 1;
+	if (scram_set_option(out, CRAM_OPT_IGNORE_CHKSUM, ignore_md5))
+	    return 1;
+    }
     
+    if (lossy_read_names) {
+	if (scram_set_option(out, CRAM_OPT_LOSSY_READ_NAMES, lossy_read_names))
+	    return 1;
+    }
+
+    if (preserve_aux_order)
+	if (scram_set_option(out, CRAM_OPT_PRESERVE_AUX_ORDER, preserve_aux_order))
+	    return 1;
+
+    if (preserve_aux_size)
+	if (scram_set_option(out, CRAM_OPT_PRESERVE_AUX_SIZE, preserve_aux_size))
+	    return 1;
+
+    if (sam_fields)
+	scram_set_option(in, CRAM_OPT_REQUIRED_FIELDS, sam_fields);
 
     /* Copy header and refs from in to out, for writing purposes */
     scram_set_header(out, scram_get_header(in));
@@ -401,7 +467,7 @@ int main(int argc, char **argv) {
 			   "CL", arg_list, NULL))
 	    return 1;
 
-	if (scram_write_header(out))
+	if ((header || omode[1] != 's') && scram_write_header(out) != 0)
 	    return 1;
 
 	free(arg_list);
@@ -447,26 +513,35 @@ int main(int argc, char **argv) {
 		break;
     }
 
-    if (max_reads == -1) {
-	switch(scram_eof(in)) {
-	case 0:
+    switch(scram_eof(in)) {
+    case -1:
+	fprintf(stderr, "Failed to decode sequence\n");
+	return 1;
+    case 0:
+	if (max_reads == -1) {
 	    fprintf(stderr, "Failed to decode sequence\n");
 	    return 1;
-	case 2:
-	    fprintf(stderr, "Warning: no end-of-file block identified. "
-		    "File may be truncated.\n");
-	    break;
-	case 1: default:
-	    // expected case
+	} else {
 	    break;
 	}
+    case 2:
+	fprintf(stderr, "Warning: no end-of-file block identified. "
+		"File may be truncated.\n");
+	break;
+    case 1: default:
+	// expected case
+	break;
     }
 
     /* Finally tidy up and close files */
-    if (scram_close(in))
+    if (scram_close(in)) {
+	fprintf(stderr, "Failed in scram_close(in)\n");
 	return 1;
-    if (scram_close(out))
+    }
+    if (scram_close(out)) {
+	fprintf(stderr, "Failed in scram_close(out)\n");
 	return 1;
+    }
 
     if (p)
 	t_pool_destroy(p, 0);

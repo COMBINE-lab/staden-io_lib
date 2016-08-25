@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Genome Research Ltd.
+ * Copyright (c) 2013, 2014, 2015 Genome Research Ltd.
  * Author(s): James Bonfield
  * 
  * Redistribution and use in source and binary forms, with or without 
@@ -91,16 +91,18 @@ typedef struct {
 typedef struct {
     int32_t content_id;
     enum cram_external_type type;
+    cram_block *b;
 } cram_external_decoder;
 
 typedef struct {
     struct cram_codec *len_codec;
-    struct cram_codec *value_codec;
+    struct cram_codec *val_codec;
 } cram_byte_array_len_decoder;
 
 typedef struct {
     unsigned char stop;
     int32_t content_id;
+    cram_block *b;
 } cram_byte_array_stop_decoder;
 
 typedef struct {
@@ -125,6 +127,8 @@ typedef struct cram_codec {
 		  char *in, int in_size);
     int (*store)(struct cram_codec *codec, cram_block *b, char *prefix,
 		 int version);
+    void (*reset)(struct cram_codec *codec); // used between slices in a container
+
     union {
 	cram_huffman_decoder         huffman;
 	cram_external_decoder        external;
@@ -142,7 +146,7 @@ typedef struct cram_codec {
     };
 } cram_codec;
 
-char *cram_encoding2str(enum cram_encoding t);
+const char *cram_encoding2str(enum cram_encoding t);
 
 cram_codec *cram_decoder_init(enum cram_encoding codec, char *data, int size,
 			      enum cram_external_type option,
@@ -157,6 +161,22 @@ cram_codec *cram_encoder_init(enum cram_encoding codec, cram_stats *st,
 //#define GET_BIT_MSB(b,v) (void)(v<<=1, v|=(b->data[b->byte] >> b->bit)&1, (--b->bit == -1) && (b->bit = 7, b->byte++))
 
 #define GET_BIT_MSB(b,v) (void)(v<<=1, v|=(b->data[b->byte] >> b->bit)&1, b->byte += (--b->bit<0), b->bit&=7)
+
+/*
+ * Check that enough bits are left in a block to satisy a bit-based decoder.
+ * Return  0 if there are enough
+ *         1 if not.
+ */
+
+static inline int cram_not_enough_bits(cram_block *blk, int nbits) {
+    if (nbits < 0 ||
+	(blk->byte >= blk->uncomp_size && nbits > 0) ||
+	(blk->uncomp_size - blk->byte <= INT32_MAX / 8 + 1 &&
+	 (blk->uncomp_size - blk->byte) * 8 + blk->bit - 7 < nbits)) {
+        return 1;
+    }
+    return 0;
+}
 
 /*
  * Returns the content_id used by this codec, also in id2 if byte_array_len.

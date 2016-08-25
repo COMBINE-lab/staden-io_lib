@@ -668,7 +668,7 @@ int srf_read_index_hdr(srf_t *srf, srf_index_hdr_t *hdr, int no_seek) {
 	    return -1;
 
 	/* Seek to index header and re-read */
-	if (0 != fseeko(srf->fp, -hdr->size, SEEK_END))
+	if (0 != fseeko(srf->fp, -(int64_t)hdr->size, SEEK_END))
 	    return -1;
     }
 
@@ -1414,7 +1414,7 @@ int pack_trace_suffix(unsigned char *suffix, char *fmt, ...) {
 
 	/* A format specifier */
 	case '%': {
-	    int width;
+	    int width __UNUSED__;
 	    int bits = 0;
 	    signed int val;
 

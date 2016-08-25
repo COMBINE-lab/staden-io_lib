@@ -91,7 +91,7 @@ bin_PROGRAMS = convert_trace$(EXEEXT) makeSCF$(EXEEXT) \
 	srf_list$(EXEEXT) hash_exp$(EXEEXT) cram_dump$(EXEEXT) \
 	cram_index$(EXEEXT) scramble$(EXEEXT) scram_merge$(EXEEXT) \
 	scram_pileup$(EXEEXT) scram_flagstat$(EXEEXT) \
-	scram_test$(EXEEXT)
+	scram_test$(EXEEXT) cram_size$(EXEEXT)
 subdir = progs
 DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
 	$(top_srcdir)/depcomp
@@ -122,6 +122,9 @@ cram_dump_DEPENDENCIES = $(top_builddir)/io_lib/libstaden-read.la
 am_cram_index_OBJECTS = cram_index.$(OBJEXT)
 cram_index_OBJECTS = $(am_cram_index_OBJECTS)
 cram_index_DEPENDENCIES = $(top_builddir)/io_lib/libstaden-read.la
+am_cram_size_OBJECTS = cram_size.$(OBJEXT)
+cram_size_OBJECTS = $(am_cram_size_OBJECTS)
+cram_size_DEPENDENCIES = $(top_builddir)/io_lib/libstaden-read.la
 am_extract_fastq_OBJECTS = extract_fastq.$(OBJEXT)
 extract_fastq_OBJECTS = $(am_extract_fastq_OBJECTS)
 extract_fastq_DEPENDENCIES = $(top_builddir)/io_lib/libstaden-read.la
@@ -252,34 +255,36 @@ am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
 SOURCES = $(append_sff_SOURCES) $(convert_trace_SOURCES) \
 	$(cram_dump_SOURCES) $(cram_index_SOURCES) \
-	$(extract_fastq_SOURCES) $(extract_qual_SOURCES) \
-	$(extract_seq_SOURCES) $(get_comment_SOURCES) \
-	$(hash_exp_SOURCES) $(hash_extract_SOURCES) \
-	$(hash_list_SOURCES) $(hash_sff_SOURCES) $(hash_tar_SOURCES) \
-	$(index_tar_SOURCES) $(makeSCF_SOURCES) $(scf_dump_SOURCES) \
-	$(scf_info_SOURCES) $(scf_update_SOURCES) \
-	$(scram_flagstat_SOURCES) $(scram_merge_SOURCES) \
-	$(scram_pileup_SOURCES) $(scram_test_SOURCES) \
-	$(scramble_SOURCES) $(srf2fasta_SOURCES) $(srf2fastq_SOURCES) \
-	$(srf_dump_all_SOURCES) $(srf_extract_hash_SOURCES) \
-	$(srf_extract_linear_SOURCES) $(srf_filter_SOURCES) \
-	$(srf_index_hash_SOURCES) $(srf_info_SOURCES) \
-	$(srf_list_SOURCES) $(trace_dump_SOURCES) $(ztr_dump_SOURCES)
+	$(cram_size_SOURCES) $(extract_fastq_SOURCES) \
+	$(extract_qual_SOURCES) $(extract_seq_SOURCES) \
+	$(get_comment_SOURCES) $(hash_exp_SOURCES) \
+	$(hash_extract_SOURCES) $(hash_list_SOURCES) \
+	$(hash_sff_SOURCES) $(hash_tar_SOURCES) $(index_tar_SOURCES) \
+	$(makeSCF_SOURCES) $(scf_dump_SOURCES) $(scf_info_SOURCES) \
+	$(scf_update_SOURCES) $(scram_flagstat_SOURCES) \
+	$(scram_merge_SOURCES) $(scram_pileup_SOURCES) \
+	$(scram_test_SOURCES) $(scramble_SOURCES) $(srf2fasta_SOURCES) \
+	$(srf2fastq_SOURCES) $(srf_dump_all_SOURCES) \
+	$(srf_extract_hash_SOURCES) $(srf_extract_linear_SOURCES) \
+	$(srf_filter_SOURCES) $(srf_index_hash_SOURCES) \
+	$(srf_info_SOURCES) $(srf_list_SOURCES) $(trace_dump_SOURCES) \
+	$(ztr_dump_SOURCES)
 DIST_SOURCES = $(append_sff_SOURCES) $(convert_trace_SOURCES) \
 	$(cram_dump_SOURCES) $(cram_index_SOURCES) \
-	$(extract_fastq_SOURCES) $(extract_qual_SOURCES) \
-	$(extract_seq_SOURCES) $(get_comment_SOURCES) \
-	$(hash_exp_SOURCES) $(hash_extract_SOURCES) \
-	$(hash_list_SOURCES) $(hash_sff_SOURCES) $(hash_tar_SOURCES) \
-	$(index_tar_SOURCES) $(makeSCF_SOURCES) $(scf_dump_SOURCES) \
-	$(scf_info_SOURCES) $(scf_update_SOURCES) \
-	$(scram_flagstat_SOURCES) $(scram_merge_SOURCES) \
-	$(scram_pileup_SOURCES) $(scram_test_SOURCES) \
-	$(scramble_SOURCES) $(srf2fasta_SOURCES) $(srf2fastq_SOURCES) \
-	$(srf_dump_all_SOURCES) $(srf_extract_hash_SOURCES) \
-	$(srf_extract_linear_SOURCES) $(srf_filter_SOURCES) \
-	$(srf_index_hash_SOURCES) $(srf_info_SOURCES) \
-	$(srf_list_SOURCES) $(trace_dump_SOURCES) $(ztr_dump_SOURCES)
+	$(cram_size_SOURCES) $(extract_fastq_SOURCES) \
+	$(extract_qual_SOURCES) $(extract_seq_SOURCES) \
+	$(get_comment_SOURCES) $(hash_exp_SOURCES) \
+	$(hash_extract_SOURCES) $(hash_list_SOURCES) \
+	$(hash_sff_SOURCES) $(hash_tar_SOURCES) $(index_tar_SOURCES) \
+	$(makeSCF_SOURCES) $(scf_dump_SOURCES) $(scf_info_SOURCES) \
+	$(scf_update_SOURCES) $(scram_flagstat_SOURCES) \
+	$(scram_merge_SOURCES) $(scram_pileup_SOURCES) \
+	$(scram_test_SOURCES) $(scramble_SOURCES) $(srf2fasta_SOURCES) \
+	$(srf2fastq_SOURCES) $(srf_dump_all_SOURCES) \
+	$(srf_extract_hash_SOURCES) $(srf_extract_linear_SOURCES) \
+	$(srf_filter_SOURCES) $(srf_index_hash_SOURCES) \
+	$(srf_info_SOURCES) $(srf_list_SOURCES) $(trace_dump_SOURCES) \
+	$(ztr_dump_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -367,8 +372,10 @@ PACKAGE_VERSION = @PACKAGE_VERSION@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 RANLIB = @RANLIB@
 SED = @SED@
+SET_CRAM_IO_CUSTOM_BUFFERING = @SET_CRAM_IO_CUSTOM_BUFFERING@
 SET_ENDIAN = @SET_ENDIAN@
 SET_MAKE = @SET_MAKE@
+SET_STDIO_EXT = @SET_STDIO_EXT@
 SHELL = @SHELL@
 STRIP = @STRIP@
 VERSION = @VERSION@
@@ -483,6 +490,8 @@ srf_list_SOURCES = srf_list.c
 srf_list_LDADD = $(top_builddir)/io_lib/libstaden-read.la
 cram_dump_SOURCES = cram_dump.c
 cram_dump_LDADD = $(top_builddir)/io_lib/libstaden-read.la
+cram_size_SOURCES = cram_size.c
+cram_size_LDADD = $(top_builddir)/io_lib/libstaden-read.la
 cram_index_SOURCES = cram_index.c
 cram_index_LDADD = $(top_builddir)/io_lib/libstaden-read.la
 
@@ -604,6 +613,10 @@ cram_dump$(EXEEXT): $(cram_dump_OBJECTS) $(cram_dump_DEPENDENCIES) $(EXTRA_cram_
 cram_index$(EXEEXT): $(cram_index_OBJECTS) $(cram_index_DEPENDENCIES) $(EXTRA_cram_index_DEPENDENCIES) 
 	@rm -f cram_index$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(cram_index_OBJECTS) $(cram_index_LDADD) $(LIBS)
+
+cram_size$(EXEEXT): $(cram_size_OBJECTS) $(cram_size_DEPENDENCIES) $(EXTRA_cram_size_DEPENDENCIES) 
+	@rm -f cram_size$(EXEEXT)
+	$(AM_V_CCLD)$(LINK) $(cram_size_OBJECTS) $(cram_size_LDADD) $(LIBS)
 
 extract_fastq$(EXEEXT): $(extract_fastq_OBJECTS) $(extract_fastq_DEPENDENCIES) $(EXTRA_extract_fastq_DEPENDENCIES) 
 	@rm -f extract_fastq$(EXEEXT)
@@ -735,6 +748,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/convert_trace.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cram_dump.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cram_index.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cram_size.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/extract_fastq.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/extract_qual.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/extract_seq.Po@am__quote@

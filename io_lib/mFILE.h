@@ -51,13 +51,6 @@ typedef struct {
     size_t flush_pos;
 } mFILE;
 
-#define MF_READ    1
-#define MF_WRITE   2
-#define MF_APPEND  4
-#define MF_BINARY  8
-#define MF_TRUNC  16
-#define MF_MODEX  32
-
 mFILE *mfreopen(const char *path, const char *mode, FILE *fp);
 mFILE *mfopen(const char *path, const char *mode);
 int mfdetach(mFILE *mf);

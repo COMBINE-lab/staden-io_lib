@@ -246,6 +246,46 @@ scram_fd *scram_open(const char *filename, const char *mode) {
     return fd;
 }
 
+#if defined(CRAM_IO_CUSTOM_BUFFERING)
+/*
+ * Open CRAM file for reading via callbacks
+ *
+ * Returns scram pointer on success
+ *         NULL on failure
+ */
+scram_fd *scram_open_cram_via_callbacks(
+    char const * filename,
+    cram_io_allocate_read_input_t   callback_allocate_function,
+    cram_io_deallocate_read_input_t callback_deallocate_function,
+    size_t const bufsize            
+)
+{
+    scram_fd *fd = calloc(1, sizeof(*fd));
+    if (!fd)
+	return NULL;
+
+    fd->eof = 0;
+
+    /* I/O buffer */
+    fd->fp = NULL;
+    fd->buf = NULL;
+    fd->alloc = fd->used = 0;
+    fd->pool = NULL;
+
+    if ((fd->c = cram_open_by_callbacks(filename,
+					callback_allocate_function,
+					callback_deallocate_function,
+					bufsize))) 
+    {
+	cram_load_reference(fd->c, NULL);
+	fd->is_bam = 0;
+	return fd;
+    }
+
+    return NULL;
+}
+#endif
+
 int scram_close(scram_fd *fd) {
     int r;
 
@@ -264,7 +304,12 @@ int scram_close(scram_fd *fd) {
 }
 
 SAM_hdr *scram_get_header(scram_fd *fd) {
+#ifdef __INTEL_COMPILER
+    // avoids cmovne generation from icc 2015 (bug)
+    return fd->is_bam && fd->b ? fd->b->header : fd->c->header;
+#else
     return fd->is_bam ? fd->b->header : fd->c->header;
+#endif
 }
 
 refs_t *scram_get_refs(scram_fd *fd) {
@@ -307,8 +352,10 @@ int scram_get_seq(scram_fd *fd, bam_seq_t **bsp) {
 	    // FIXME: if we ever implement range queries for BAM this will
 	    // need amendments to not claim a sub-range is invalid EOF.
 	    fd->eof = fd->b->eof_block ? 1 : 2;
+	    return -1;
 
 	default:
+	    fd->eof = -1; // err
 	    return -1;
 	}
     }

@@ -42,12 +42,14 @@
 #include <assert.h>
 #include <ctype.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <io_lib/cram.h>
 
 void DumpMap2(cram_map **ma, FILE *fp, char *prefix, char *data,
 	      HashTable *ds_h) {
-    int i, j, k;
+    int i, j;
+    uintptr_t k;
     for (i = 0; i < CRAM_MAP_HASH; i++) {
 	cram_map *m;
 	for (m = ma[i]; m; m = m->next) {
@@ -167,7 +169,7 @@ int main(int argc, char **argv) {
     HashTable *ds_h; // content_id to data-series lookup.
     HashTable *dc_h; // content_id to data-compression lookup
 
-    static bmax = 0;
+    static int bmax = 0;
     bsize_h = HashTableCreate(128, HASH_DYNAMIC_SIZE|
 			    HASH_NONVOLATILE_KEYS |
 			    HASH_INT_KEYS);
@@ -201,7 +203,7 @@ int main(int argc, char **argv) {
 	   sam_hdr_length(fd->header),
 	   sam_hdr_str(fd->header));
 
-    pos = ftello(fd->fp);
+    pos = CRAM_IO_TELLO(fd);
     while ((c = cram_read_container(fd))) {
 	int i, j;
 
@@ -213,7 +215,7 @@ int main(int argc, char **argv) {
 	printf("\nContainer pos %"PRId64" size %d\n", (int64_t)pos, c->length);
 	printf("    Ref id:            %d\n", c->ref_seq_id);
 	printf("    Ref pos:           %d + %d\n", c->ref_seq_start, c->ref_seq_span);
-	printf("    Rec counter:       %d\n", c->record_counter);
+	printf("    Rec counter:       %"PRId64"\n", c->record_counter);
        	printf("    No. recs:          %d\n", c->num_records);
 	printf("    No. bases          %"PRId64"\n", c->num_bases);
 	printf("    No. blocks:        %d\n", c->num_blocks);
@@ -225,11 +227,11 @@ int main(int argc, char **argv) {
 	}
 	printf("}\n");
 
-	hpos = ftello(fd->fp);
+	hpos = CRAM_IO_TELLO(fd);
 
 	if (!c->length) {
 	    //printf("\n    EMPTY BLOCK\n");
-	    pos = ftello(fd->fp);
+	    pos = CRAM_IO_TELLO(fd);
 	    continue;
 	}
 	printf("\n    Container_header block pos %"PRId64"\n", (int64_t)hpos);
@@ -250,6 +252,10 @@ int main(int argc, char **argv) {
 	printf("        T: %.4s\n", c->comp_hdr->substitution_matrix[3]);
 	printf("        N: %.4s\n", c->comp_hdr->substitution_matrix[4]);
 
+	printf("      TD map:\n");
+	for (i = 0; i < c->comp_hdr->nTL; i++)
+	    printf("        %3d: %s\n", i, c->comp_hdr->TL[i]);
+
 	printf("\n      Record encoding map:\n");
 	DumpMap2(c->comp_hdr->rec_encoding_map, stdout, "\t", 
 		 (char *)c->comp_hdr_block->data, ds_h);
@@ -262,7 +268,7 @@ int main(int argc, char **argv) {
 	    cram_slice *s;
 	    int id;
 	    
-	    pos2 = ftello(fd->fp);
+	    pos2 = CRAM_IO_TELLO(fd);
 	    assert(pos2 - pos - c->offset == c->landmark[j]);
 
 	    s = cram_read_slice(fd);
@@ -280,7 +286,7 @@ int main(int argc, char **argv) {
 		    printf("%02x", s->hdr->md5[i]);
 		putchar('\n');
 	    }
-	    printf("\tRec counter      %d\n", s->hdr->record_counter);
+	    printf("\tRec counter      %"PRId64"\n", s->hdr->record_counter);
 	    printf("\tNo. records      %d\n", s->hdr->num_records);
 	    printf("\tNo. blocks       %d\n", s->hdr->num_blocks);
 	    printf("\tBlk IDS:         {");
@@ -291,18 +297,65 @@ int main(int argc, char **argv) {
 	    if (s->hdr->content_type == MAPPED_SLICE) {
 		printf("\tRef base id:     %d\n", s->hdr->ref_base_id);
 	    }
+
+	    if (s->hdr->tags) {
+		HashIter *iter;
+		HashItem *hi;
+
+		iter = HashTableIterCreate();
+		while ((hi = HashTableIterNext(s->hdr->tags, iter))) {
+		    printf("\tOptional tag %c%c:%c:",
+			   hi->key[0], hi->key[1], hi->key[2]);
+
+		    switch(hi->key[2]) {
+			uint32_t len;
+			unsigned char *dat;
+		    case 'i':
+			printf("%"PRId64"\n", hi->data.i);
+			break;
+		    case 'f':
+			printf("%f\n", hi->data.f);
+			break;
+		    case 'Z': case 'H':
+			printf("%s\n", (char *)hi->data.p);
+			break;
+		    case 'A':
+			printf("<%d>\n", (unsigned char)hi->data.i);
+			break;
+		    case 'B':
+			dat = hi->data.p;
+			len = dat[1] | (dat[2]<<8) | (dat[3]<<16)| (dat[4]<<24);
+			switch(dat[0]) {
+			case 's': case 'S':
+			    len *= 2;
+			    break;
+			case 'i': case 'I': case 'f':
+			    len *= 4;
+			    break;
+			default:
+			    break;
+			}
+			putchar(dat[0]);
+			dat += 5;
+			while (len--) {
+			    printf(",%02x", *dat++);
+			}
+			putchar('\n');
+		    }
+		}
+	    }
 	
 	    for (id = 0; id < s->hdr->num_blocks; id++) {
 		HashItem *hi;
-		int k = s->block[id]->content_type == CORE
+		intptr_t k = s->block[id]->content_type == CORE
 		    ? -1 : s->block[id]->content_id;
-		hi = HashTableSearch(bsize_h, (char *)k, 4);
+		hi = HashTableSearch(bsize_h, (char *)k, sizeof(k));
 		if (hi) {
 		    hi->data.i += s->block[id]->comp_size;
 		} else {
 		    HashData hd;
 		    hd.i = s->block[id]->comp_size;
-		    HashTableAdd(bsize_h, (char *)k, 4, hd, NULL);
+		    HashTableAdd(bsize_h, (char *)k, sizeof(k), hd, NULL);
 		}
 
 		// WARNING: scuppered by having high content_id values.
@@ -533,8 +586,14 @@ int main(int argc, char **argv) {
 			    }
 
 			    case 'I': { // Insertion (several bases); IN
-				char dat[100];
+				static char *dat = NULL;
+				static int dat_l = 0;
 				int32_t out_sz2 = 1;
+
+				if (dat_l < rl+1) {
+				    dat = realloc(dat, rl+1);
+				    dat_l = rl;
+				}
 
 				dat[0]='?';dat[1]=0;
 				r = c->comp_hdr->codecs[DS_IN]->decode(s,c->comp_hdr->codecs[DS_IN], b, dat, &out_sz2);
@@ -550,9 +609,14 @@ int main(int argc, char **argv) {
 			    }
 
 			    case 'b': { // Read bases; BB
-				unsigned char l, cc;
+				static char *seq = NULL;
+				static int seq_l = 0;
 				int out_sz2;
-				char seq[256];
+
+				if (seq_l < rl) {
+				    seq = realloc(seq, rl);
+				    seq_l = rl;
+				}
 
 				r  = c->comp_hdr->codecs[DS_BB]->decode(s,c->comp_hdr->codecs[DS_BB], b, seq, &out_sz2);
 				printf("  %d: BB(b) = %.*s (ret %d, out_sz %d)\n", f, out_sz2, seq, r, out_sz2);
@@ -560,9 +624,14 @@ int main(int argc, char **argv) {
 			    }
 
 			    case 'q': { // Read bases; QQ
-				unsigned char l, cc;
 				int out_sz2;
-				char qual[256];
+				static char *qual = NULL;
+				static int qual_l = 0;
+
+				if (qual_l < rl) {
+				    qual = realloc(qual, rl);
+				    qual_l = rl;
+				}
 
 				r  = c->comp_hdr->codecs[DS_QQ]->decode(s,c->comp_hdr->codecs[DS_QQ], b, qual, &out_sz2);
 				printf("  %d: QQ(b) = %.*s (ret %d, out_sz %d)\n", f, out_sz2, qual, r, out_sz2);
@@ -609,25 +678,29 @@ int main(int argc, char **argv) {
 
 			if (cf & CRAM_FLAG_PRESERVE_QUAL_SCORES) {
 			    char dat[1024];
-			    int32_t out_sz2 = rl, i;
+			    int len = rl;
 
-			    dat[0]='?';dat[1]=0;
-			    r = c->comp_hdr->codecs[DS_QS]->decode(s,c->comp_hdr->codecs[DS_QS], b, dat, &out_sz2);
-			    for (i = 0; i < rl; i++)
-				dat[i] += '!';
-			    printf("QS = %.*s (ret %d, out_sz %d)\n", out_sz2, dat, r, out_sz2);
+			    do {
+				int32_t out_sz2 = len > 1024 ? 1024 : len, i;
+				dat[0]='?';dat[1]=0;
+				r = c->comp_hdr->codecs[DS_QS]->decode(s,c->comp_hdr->codecs[DS_QS], b, dat, &out_sz2);
+				for (i = 0; i < out_sz2; i++)
+				    dat[i] += '!';
+				printf("QS = %.*s (ret %d, out_sz %d)\n", out_sz2, dat, r, out_sz2);
+				len -= 1024;
+			    } while (len > 0);
 			}
 		    } else {
 			puts("Unmapped");
 			char dat[1024];
 			int len = rl;
 
-			do {
+			while (len > 0) {
 			    int32_t out_sz2 = len > 1024 ? 1024 : len;
 			    r = c->comp_hdr->codecs[DS_BA]->decode(s, c->comp_hdr->codecs[DS_BA], b, dat, &out_sz2);
 			    printf("SQ = %.*s (out_sz %d)\n", out_sz2, dat, out_sz2);
 			    len -= 1024;
-			} while (len > 0);
+			}
 
 			if (cf & CRAM_FLAG_PRESERVE_QUAL_SCORES) {
 			    int len = rl, i;
@@ -635,7 +708,7 @@ int main(int argc, char **argv) {
 			    do {
 				int32_t out_sz2 = len > 1024 ? 1024 : len;
 				r = c->comp_hdr->codecs[DS_QS]->decode(s, c->comp_hdr->codecs[DS_QS], b, dat, &out_sz2);
-				for (i = 0; i < len; i++)
+				for (i = 0; i < out_sz2; i++)
 				    dat[i] += '!';
 				printf("QS = %.*s (out_sz %d)\n", out_sz2, dat, out_sz2);
 				len -= 1024;
@@ -646,7 +719,7 @@ int main(int argc, char **argv) {
 	    }
 
 	    for (id = 0; id < s->hdr->num_blocks; id++) {
-		HashData hd;
+		HashData hd = {0};
 		cram_block *b = s->block[id];
 		printf("\n\tBlock %d/%d\n", id+1, s->hdr->num_blocks);
 		printf("\t    Size:         %d comp / %d uncomp\n",
@@ -720,7 +793,7 @@ int main(int argc, char **argv) {
 	    cram_free_slice(s);
 	}
 
-	pos = ftello(fd->fp);
+	pos = CRAM_IO_TELLO(fd);
 	assert(pos == hpos + c->length);
 
 	cram_free_container(c);
@@ -729,24 +802,25 @@ int main(int argc, char **argv) {
     cram_close(fd);
 
     {
-	int id;
+	intptr_t id;
 
 	puts("");
 	for (id = -1; id <= bmax; id++) {
-	    int k;
+	    intptr_t k;
 	    HashItem *hi;
 	    HashIter *iter;
 
-	    if (!(hi = HashTableSearch(bsize_h, (char *)id, 4)))
+	    if (!(hi = HashTableSearch(bsize_h, (char *)id, sizeof(id))))
 		continue;
 
-	    k = (int)hi->key;
+	    k = (intptr_t) hi->key;
 	    if (k == -1) {
-		printf("Block CORE          , total size %10ld\n", hi->data.i);
+		printf("Block CORE              , total size %11"PRId64"\n", hi->data.i);
 		continue;
 	    }
 
-	    printf("Block content_id %3d, total size %10ld ", k, hi->data.i);
+	    printf("Block content_id %7d, total size %11"PRId64" ",
+		   (int) k, hi->data.i);
 
 	    struct {
 		int id;
@@ -777,7 +851,7 @@ int main(int argc, char **argv) {
 		if (hi->data.i != k)
 		    continue;
 		
-		c = ((int)hi->key)>>8;
+		c = ((uintptr_t) hi->key)>>8;
 		
 		buf[x--] = 0;
 		while(c & 0xff) {

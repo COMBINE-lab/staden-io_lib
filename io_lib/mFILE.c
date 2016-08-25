@@ -45,9 +45,26 @@
 #include <unistd.h>
 #include <stdarg.h>
 
+#ifdef _MSC_VER
+#include <io.h>
+#endif
+
 #include "io_lib/os.h"
 #include "io_lib/mFILE.h"
 #include "io_lib/vlen.h"
+
+#ifdef HAVE_MMAP
+#include <sys/mman.h>
+#endif
+
+//Moved from mFILE.h to avoid conflicting with WinUser.h
+#define MF_READ    1
+#define MF_WRITE   2
+#define MF_APPEND  4
+#define MF_BINARY  8
+#define MF_TRUNC  16
+#define MF_MODEX  32
+#define MF_MMAP   64
 
 /*
  * This file contains memory-based versions of the most commonly used
@@ -107,6 +124,33 @@ static char *mfload(FILE *fp, const char *fn, size_t *size, int binary) {
 
     return data;
 }
+
+
+#ifdef HAVE_MMAP
+/*
+ * mmaps in the file, but only for reading currently.
+ *
+ * Returns 0 on success
+ *        -1 on failure
+ */
+int mfmmap(mFILE *mf, FILE *fp, const char *fn) {
+    struct stat sb;
+
+    if (stat(fn, &sb) != 0)
+	return -1;
+
+    mf->size = sb.st_size;
+    mf->data = mmap(NULL, mf->size, PROT_READ, MAP_SHARED,
+		    fileno(fp), 0);
+
+    if (!mf->data)
+	return -1;
+
+    mf->alloced = 0;
+    return 0;
+}
+#endif
+
 
 /*
  * Creates and returns m_channel[0].
@@ -235,6 +279,8 @@ mFILE *mfreopen(const char *path, const char *mode_str, FILE *fp) {
      * w = write on close
      * a = position at end of buffer
      * x = position at same location as the original fp, don't seek on flush
+     * + = for update (read and write)
+     * m = mmap (read only)
      */
     if (strchr(mode_str, 'r'))
 	r = 1, mode |= MF_READ;
@@ -251,15 +297,29 @@ mFILE *mfreopen(const char *path, const char *mode_str, FILE *fp) {
 	if (a)
 	    r = 1;
     }
+#ifdef HAVE_MMAP
+    if (strchr(mode_str, 'm'))
+	if (!w) mode |= MF_MMAP;
+#endif
 
     if (r) {
 	mf = mfcreate(NULL, 0);
 	if (NULL == mf) return NULL;
 	if (!(mode & MF_TRUNC)) {
-	    mf->data = mfload(fp, path, &mf->size, b);
-	    mf->alloced = mf->size;
-	    if (!a)
-		fseek(fp, 0, SEEK_SET);
+#ifdef HAVE_MMAP
+	    if (mode & MF_MMAP) {
+		if (mfmmap(mf, fp, path) == -1) {
+		    mf->data = NULL;
+		    mode &= ~MF_MMAP;
+		}
+	    }
+#endif
+	    if (!mf->data) {
+		mf->data = mfload(fp, path, &mf->size, b);
+		mf->alloced = mf->size;
+		if (!a)
+		    fseek(fp, 0, SEEK_SET);
+	    }
 	}
     } else if (w) {
 	/* Write - initialise the data structures */
@@ -291,8 +351,20 @@ mFILE *mfreopen(const char *path, const char *mode_str, FILE *fp) {
  */
 mFILE *mfopen(const char *path, const char *mode) {
     FILE *fp;
+    char mode2[11];
+    int i1 = 0, i2 = 0;
 
-    if (NULL == (fp = fopen(path, mode)))
+    /* Remove the 'm' mmap symbol from mode before calling fopen() as
+     * MS Visual Studio dislikes it remaining.
+     */
+    while (i1 < 10 && mode[i1]) {
+	if (mode[i1] != 'm')
+	    mode2[i2++] = mode[i1];
+	i1++;
+    }
+    mode2[i2] = 0;
+
+    if (NULL == (fp = fopen(path, mode2)))
 	return NULL;
     return mfreopen(path, mode, fp);
 }
@@ -309,6 +381,14 @@ int mfclose(mFILE *mf) {
 
     mfflush(mf);
 
+#ifdef HAVE_MMAP
+    if ((mf->mode & MF_MMAP) && mf->data) {
+	/* Mmaped */
+	munmap(mf->data, mf->size);
+	mf->data = NULL;
+    }
+#endif
+
     if (mf->fp)
 	fclose(mf->fp);
 
@@ -320,12 +400,16 @@ int mfclose(mFILE *mf) {
 /*
  * Closes the file pointer contained within the mFILE without destroying
  * the in-memory data.
+ *
+ * Attempting to do this on an mmaped buffer is an error.
  */
 int mfdetach(mFILE *mf) {
     if (!mf)
 	return -1;
 
     mfflush(mf);
+    if (mf->mode & MF_MMAP)
+	return -1;
 
     if (mf->fp) {
 	fclose(mf->fp);
@@ -354,6 +438,8 @@ int mfdestroy(mFILE *mf) {
  * It is up to the caller to free the stolen buffer.  If size_out is
  * not NULL, mf->size will be stored in it.
  * This is more-or-less the opposite of mfcreate().
+ *
+ * Note, we cannot steal the allocated buffer from an mmaped mFILE.
  */
 
 void *mfsteal(mFILE *mf, size_t *size_out) {
@@ -365,7 +451,9 @@ void *mfsteal(mFILE *mf, size_t *size_out) {
     
     if (NULL != size_out) *size_out = mf->size;
 
-    mfdetach(mf);
+    if (mfdetach(mf) != 0)
+	return NULL;
+
     mf->data = NULL;
     mfdestroy(mf);
 

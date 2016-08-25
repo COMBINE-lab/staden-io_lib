@@ -135,12 +135,11 @@ typedef struct {
  * therefore minimal.
  */
 #define Z_BUFF_SIZE 65536    /* Max size of a zlib block */
-#define BGZF_BUFF_SIZE 65400 /* Max size of a BGZF block, 65477 actual */
+#define BGZF_BUFF_SIZE 65273 // 65535 - MIN_LOOKAHEAD to avoid fill_window()
 typedef struct {
     FILE *fp;
     int mode, binary, level;
     z_stream s;
-    char vbuf[Z_BUFF_SIZE*4];
 
     unsigned char comp[Z_BUFF_SIZE];
     unsigned char *comp_p;
@@ -196,7 +195,23 @@ typedef struct {
     enum quality_binning binning;
 } bam_file_t;
 
-/* Decoding the above struct */
+/* BAM flags */
+#define BAM_FPAIRED           1
+#define BAM_FPROPER_PAIR      2
+#define BAM_FUNMAP            4
+#define BAM_FMUNMAP           8
+#define BAM_FREVERSE         16
+#define BAM_FMREVERSE        32
+#define BAM_FREAD1           64
+#define BAM_FREAD2          128
+#define BAM_FSECONDARY      256
+#define BAM_FQCFAIL         512
+#define BAM_FDUP           1024
+#define BAM_FSUPPLEMENTARY 2048
+
+#define BAM_CIGAR32    32768
+
+/* Decoding the bam_seq_t struct */
 #define bam_blk_size(b)       ((b)->blk_size)
 #define bam_set_blk_size(b,v) ((b)->blk_size = (v))
 
@@ -222,7 +237,9 @@ typedef struct {
 #define bam_set_cigar_len(b, v) (((v)>>16) ? (((b)->flag |= BAM_CIGAR32), (b)->bin = ((v)>>16), (b)->cigar_len = (v)&0xffff) : ((b)->cigar_len = (v)))
 #define bam_set_name_len(b,v)   ((b)->name_len = (v))
 #define bam_set_map_qual(b,v)   ((b)->map_qual = (v))
-#define bam_set_bin(b,v)        (((b)->flag & BAM_CIGAR32) || ((b)->bin = (v)))
+static inline void bam_set_bin(bam_seq_t *b, uint32_t v) {
+    if (!(b->flag & BAM_CIGAR32)) b->bin = v;
+}
 #define bam_set_flag(b,v)       ((b)->flag = (v))
 #define bam_set_seq_len(b,v)    ((b)->len = (v))
 
@@ -238,21 +255,6 @@ typedef struct {
 
 /* Rounds up to the next multiple of 4 */
 #define round4(v) (((v-1)&~3)+4)
-
-/* BAM flags */
-#define BAM_FPAIRED        1
-#define BAM_FPROPER_PAIR   2
-#define BAM_FUNMAP         4
-#define BAM_FMUNMAP        8
-#define BAM_FREVERSE      16
-#define BAM_FMREVERSE     32
-#define BAM_FREAD1        64
-#define BAM_FREAD2       128
-#define BAM_FSECONDARY   256
-#define BAM_FQCFAIL      512
-#define BAM_FDUP        1024
-
-#define BAM_CIGAR32    32768
 
 /* CIGAR operations, taken from samtools bam.h */
 #define BAM_CIGAR_SHIFT 4
@@ -312,6 +314,8 @@ enum cigar_op {
  *         NULL on failure.
  */
 bam_file_t *bam_open(const char *fn, const char *mode);
+
+bam_file_t *bam_open_block(const char *blk, size_t blk_size, SAM_hdr *sh);
 
 /*! Closes a SAM or BAM file.
  * 

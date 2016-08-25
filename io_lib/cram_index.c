@@ -94,22 +94,26 @@ static void dump_index(cram_fd *fd) {
 }
 #endif
 
-/*
- * Loads a CRAM .crai index into memory.
- *
- * Returns 0 for success
- *        -1 for failure
- */
-int cram_index_load(cram_fd *fd, char *fn) {
-    char line[1024], fn2[PATH_MAX];
-    zfp *fp;
-    cram_index *idx;
+typedef char * (*fgets_functions)(char * s, int size, void * fp);
+
+static char * zfgets_func(char * s, int size, void * fp)
+{
+    return zfgets(s,size,(zfp *)fp);
+}
+
+#if defined(CRAM_IO_CUSTOM_BUFFERING)
+static char * cram_io_input_buffer_fgets_func(char * s, int size, void * fp)
+{
+    return cram_io_input_buffer_fgets(s,size,fp);
+}
+#endif
+
+static int cram_index_load_private(cram_fd *fd, void * fp, fgets_functions fgets_func)
+{
+    char line[1024];
+    cram_index *idx = NULL;
     cram_index **idx_stack = NULL, *ep, e;
     int idx_stack_alloc = 0, idx_stack_ptr = 0;
-
-    /* Check if already loaded */
-    if (fd->index)
-	return 0;
 
     fd->index = calloc((fd->index_sz = 1), sizeof(*fd->index));
     if (!fd->index)
@@ -123,14 +127,7 @@ int cram_index_load(cram_fd *fd, char *fn) {
     idx_stack = calloc(++idx_stack_alloc, sizeof(*idx_stack));
     idx_stack[idx_stack_ptr] = idx;
 
-    sprintf(fn2, "%s.crai", fn);
-    if (!(fp = zfopen(fn2, "r"))) {
-	perror(fn2);
-	free(idx_stack);
-	return -1; 
-    }
-
-    while (zfgets(line, 1024, fp)) {
+    while (fgets_func(line, 1024, fp)) {
 	/* 1.1 layout */
 	char *cp = line;
         errno = 0;
@@ -172,7 +169,7 @@ int cram_index_load(cram_fd *fd, char *fn) {
 	    idx_stack[(idx_stack_ptr = 0)] = idx;
 	}
 
-	while (!(e.start >= idx->start && e.end <= idx->end)) {
+	while (!(e.start >= idx->start && e.end <= idx->end) || idx->end == 0) {
 	    idx = idx_stack[--idx_stack_ptr];
 	}
 
@@ -192,12 +189,92 @@ int cram_index_load(cram_fd *fd, char *fn) {
 	}
 	idx_stack[idx_stack_ptr] = idx;
     }
-    zfclose(fp);
     free(idx_stack);
 
     // dump_index(fd);
 
     return 0;
+}
+
+#if defined(CRAM_IO_CUSTOM_BUFFERING)
+/*
+ * Loads a CRAM .crai index into memory.
+ *
+ * Returns 0 for success
+ *        -1 for failure
+ */
+int cram_index_load_via_callbacks(
+    cram_fd *fd, char const * fn,
+    cram_io_allocate_read_input_t   callback_allocate_function,
+    cram_io_deallocate_read_input_t callback_deallocate_function        
+) {
+    cram_fd * input = NULL;
+    int r = -1;
+    static char const * indexsuffix = ".crai";
+    char * indexfn = NULL;
+    size_t const fnsize = strlen(fn);
+    size_t const suffixsize = strlen(indexsuffix);
+    size_t const indexfnsize = fnsize+suffixsize+1;
+    
+    if ( !(indexfn = (char *)malloc(indexfnsize)) ) {
+        r = -1;
+        goto cleanup;
+    }
+    
+    memcpy(indexfn,       fn,         fnsize);
+    memcpy(indexfn+fnsize,indexsuffix,suffixsize);
+    indexfn[fnsize+suffixsize] = 0;
+    
+    if ( ! (input = cram_io_open_by_callbacks(indexfn,callback_allocate_function,callback_deallocate_function,32*1024,1/* decompress */)) ) {
+        r = -1;
+        goto cleanup;
+    }
+
+    r = cram_index_load_private(fd,input,cram_io_input_buffer_fgets_func);
+    
+    cleanup:
+    if ( input ) {
+        cram_io_close(input,NULL);
+        input = NULL;
+    }
+    if ( indexfn ) {
+        free(indexfn);
+        indexfn = NULL;
+    }
+    
+    return r;
+}
+#endif
+
+/*
+ * Loads a CRAM .crai index into memory.
+ *
+ * Returns 0 for success
+ *        -1 for failure
+ */
+int cram_index_load(cram_fd *fd, char const *fn) {
+    zfp *fp = NULL;
+    char fn2[PATH_MAX];
+    int r = -1;
+    
+    /* Check if already loaded */
+    if (fd->index)
+	return 0;
+
+    /* copy filename */
+    sprintf(fn2, "%s.crai", fn);
+    
+    /* open index file */
+    if (!(fp = zfopen(fn2, "r"))) {
+	perror(fn2);
+	return -1; 
+    }
+    
+    r = cram_index_load_private(fd,fp,zfgets_func);
+
+    zfclose(fp);
+    
+    return r;
 }
 
 static void cram_index_free_recurse(cram_index *e) {
@@ -226,7 +303,7 @@ void cram_index_free(cram_fd *fd) {
 
 /*
  * Searches the index for the first slice overlapping a reference ID
- * and position, or one immediately preceeding it if none is found in
+ * and position, or one immediately preceding it if none is found in
  * the index to overlap this position. (Our index may have missing
  * entries, but we require at least one per reference.)
  *
@@ -246,11 +323,16 @@ cram_index *cram_index_query(cram_fd *fd, int refid, int pos,
     if (refid+1 < 0 || refid+1 >= fd->index_sz)
 	return NULL;
 
-    i = 0, j = fd->index[refid+1].nslice-1;
-
     if (!from)
 	from = &fd->index[refid+1];
 
+    // Ref with nothing aligned against it.
+    if (!from->e)
+	return NULL;
+
+    // This sequence is covered by the index, so binary search to find
+    // the optimal starting block.
+    i = 0, j = fd->index[refid+1].nslice-1;
     for (k = j/2; k != i; k = (j-i)/2 + i) {
 	if (from->e[k].refid > refid) {
 	    j = k;
@@ -272,15 +354,18 @@ cram_index *cram_index_query(cram_fd *fd, int refid, int pos,
 	    continue;
 	}
     }
+    // i==j or i==j-1. Check if j is better.
+    if (j >= 0 && from->e[j].start < pos && from->e[j].refid == refid)
+	i = j;
 
     /* The above found *a* bin overlapping, but not necessarily the first */
     while (i > 0 && from->e[i-1].end >= pos)
 	i--;
 
-    /* Special case for matching a start pos */
-    if (i+1 < from->nslice &&
-	from->e[i+1].start == pos &&
-	from->e[i+1].refid == refid)
+    /* We may be one bin before the optimum, so check */
+    while (i+1 < from->nslice &&
+	   (from->e[i].refid < refid ||
+	    from->e[i].end < pos))
 	i++;
 
     e = &from->e[i];
@@ -299,7 +384,7 @@ int cram_seek(cram_fd *fd, off_t offset, int whence) {
 
     fd->ooc = 0;
 
-    if (fseeko(fd->fp, offset, whence) == 0)
+    if (CRAM_IO_SEEK(fd, offset, whence) == 0)
 	return 0;
 
     if (!(whence == SEEK_CUR && offset >= 0))
@@ -308,7 +393,7 @@ int cram_seek(cram_fd *fd, off_t offset, int whence) {
     /* Couldn't fseek, but we're in SEEK_CUR mode so read instead */
     while (offset > 0) {
 	int len = MIN(65536, offset);
-	if (len != fread(buf, 1, len, fd->fp))
+	if (len != CRAM_IO_READ(buf, 1, len, fd))
 	    return -1;
 	offset -= len;
     }
@@ -367,7 +452,7 @@ static int cram_index_build_multiref(cram_fd *fd,
 				     off_t cpos,
 				     int32_t landmark,
 				     int sz) {
-    int i, ref = -2, ref_start, ref_end;
+    int i, ref = -2, ref_start = 0, ref_end;
     char buf[1024];
 
     if (0 != cram_decode_slice(fd, c, s, fd->header))
@@ -418,29 +503,45 @@ int cram_index_build(cram_fd *fd, const char *fn_base) {
     off_t cpos, spos, hpos;
     zfp *fp;
     char fn_idx[PATH_MAX];
+    int seekable;
+    size_t len;
 
-    if (strlen(fn_base) > PATH_MAX-6)
+    if ((len=strlen(fn_base)) > PATH_MAX-6)
 	return -1;
 
-    sprintf(fn_idx, "%s.crai", fn_base);
+    if (len >= 5 && strcmp(&fn_base[len-5], ".crai") == 0)
+	strcpy(fn_idx, fn_base);
+    else
+	sprintf(fn_idx, "%s.crai", fn_base);
     if (!(fp = zfopen(fn_idx, "wz"))) {
         perror(fn_idx);
         return -1;
     }
 
-    cpos = ftello(fd->fp);
+    cpos = CRAM_IO_TELLO(fd);
+    if (cpos >= 0) {
+	seekable = 1;
+    } else {
+	seekable = 0;
+	cpos = fd->first_container;
+    }
     while ((c = cram_read_container(fd))) {
         int j;
 
         if (fd->err) {
             perror("Cram container read");
-            return 1;
+            return -1;
         }
 
-        hpos = ftello(fd->fp);
+	if (seekable) {
+	    hpos = CRAM_IO_TELLO(fd);
+	    assert(hpos == cpos + c->offset);
+	} else {
+	    hpos = cpos + c->offset;
+	}
 
         if (!(c->comp_hdr_block = cram_read_block(fd)))
-            return 1;
+            return -1;
         assert(c->comp_hdr_block->content_type == COMPRESSION_HEADER);
 
         c->comp_hdr = cram_decode_compression_header(fd, c->comp_hdr_block);
@@ -453,15 +554,25 @@ int cram_index_build(cram_fd *fd, const char *fn_base) {
             cram_slice *s;
             int sz;
 
-            spos = ftello(fd->fp);
-            assert(spos - cpos - c->offset == c->landmark[j]);
+	    if (seekable) {
+		spos = CRAM_IO_TELLO(fd);
+		assert(spos - cpos - c->offset == c->landmark[j]);
+	    } else {
+		spos = cpos + c->offset + c->landmark[j];
+	    }
 
             if (!(s = cram_read_slice(fd))) {
 		zfclose(fp);
 		return -1;
 	    }
 
-            sz = (int)(ftello(fd->fp) - spos);
+	    if (seekable) {
+		sz = (int)(CRAM_IO_TELLO(fd) - spos);
+	    } else {
+		sz = j+1 < c->num_landmarks
+		    ? c->landmark[j+1] - c->landmark[j]
+		    : c->length - c->landmark[c->num_landmarks-1];
+	    }
 
 	    if (s->hdr->ref_seq_id == -2) {
 		cram_index_build_multiref(fd, c, s, fp,
@@ -476,9 +587,13 @@ int cram_index_build(cram_fd *fd, const char *fn_base) {
 
             cram_free_slice(s);
         }
-
-        cpos = ftello(fd->fp);
-        assert(cpos == hpos + c->length);
+	
+	if (seekable) {
+	    cpos = CRAM_IO_TELLO(fd);
+	    assert(cpos == hpos + c->length);
+	} else {
+	    cpos = hpos + c->length;
+	}
 
         cram_free_container(c);
     }
@@ -488,5 +603,5 @@ int cram_index_build(cram_fd *fd, const char *fn_base) {
     }
 	
 
-    return zfclose(fp);
+    return (zfclose(fp) >= 0) ? 0 : -1;
 }

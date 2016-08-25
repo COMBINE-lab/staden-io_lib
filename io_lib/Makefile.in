@@ -140,7 +140,6 @@ am_libstaden_read_la_OBJECTS = libstaden_read_la-Read.lo \
 	libstaden_read_la-jenkins_lookup3.lo \
 	libstaden_read_la-mFILE.lo libstaden_read_la-pooled_alloc.lo \
 	libstaden_read_la-bam.lo libstaden_read_la-sam_header.lo \
-	libstaden_read_la-arith_static.lo \
 	libstaden_read_la-rANS_static.lo \
 	libstaden_read_la-cram_codecs.lo \
 	libstaden_read_la-cram_encode.lo \
@@ -148,8 +147,9 @@ am_libstaden_read_la_OBJECTS = libstaden_read_la-Read.lo \
 	libstaden_read_la-cram_stats.lo libstaden_read_la-cram_io.lo \
 	libstaden_read_la-cram_index.lo libstaden_read_la-zfio.lo \
 	libstaden_read_la-dstring.lo libstaden_read_la-string_alloc.lo \
-	libstaden_read_la-md5.lo libstaden_read_la-scram.lo \
-	libstaden_read_la-thread_pool.lo
+	libstaden_read_la-md5.lo libstaden_read_la-crc32.lo \
+	libstaden_read_la-scram.lo libstaden_read_la-thread_pool.lo \
+	libstaden_read_la-binning.lo libstaden_read_la-cram_bambam.lo
 libstaden_read_la_OBJECTS = $(am_libstaden_read_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -282,8 +282,10 @@ PACKAGE_VERSION = @PACKAGE_VERSION@
 PATH_SEPARATOR = @PATH_SEPARATOR@
 RANLIB = @RANLIB@
 SED = @SED@
+SET_CRAM_IO_CUSTOM_BUFFERING = @SET_CRAM_IO_CUSTOM_BUFFERING@
 SET_ENDIAN = @SET_ENDIAN@
 SET_MAKE = @SET_MAKE@
+SET_STDIO_EXT = @SET_STDIO_EXT@
 SHELL = @SHELL@
 STRIP = @STRIP@
 VERSION = @VERSION@
@@ -445,8 +447,6 @@ libstaden_read_la_SOURCES = \
 	sam_header.h \
 	sam_header.c \
 	cram.h \
-	arith_static.c \
-	arith_static.h \
 	rANS_static.c \
 	rANS_static.h \
 	cram_codecs.c \
@@ -470,11 +470,15 @@ libstaden_read_la_SOURCES = \
 	string_alloc.h \
 	md5.c \
 	md5.h \
+	crc32.c \
+	crc32.h \
 	scram.c \
 	scram.h \
 	thread_pool.c \
 	thread_pool.h \
-	binning.h
+	binning.h \
+	binning.c \
+	cram_bambam.c
 
 libstaden_read_la_CPPFLAGS = @LIBCURL_CPPFLAGS@
 libstaden_read_la_LDFLAGS = -version-info @VERS_CURRENT@:@VERS_REVISION@:@VERS_AGE@ 
@@ -562,17 +566,19 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-Read.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-arith_static.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-array.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-bam.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-binning.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-compress.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-compression.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_bambam.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_codecs.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_decode.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_encode.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_index.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_io.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-cram_stats.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-crc32.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-deflate_interlaced.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-dstring.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstaden_read_la-error.Plo@am__quote@
@@ -877,13 +883,6 @@ libstaden_read_la-sam_header.lo: sam_header.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-sam_header.lo `test -f 'sam_header.c' || echo '$(srcdir)/'`sam_header.c
 
-libstaden_read_la-arith_static.lo: arith_static.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libstaden_read_la-arith_static.lo -MD -MP -MF $(DEPDIR)/libstaden_read_la-arith_static.Tpo -c -o libstaden_read_la-arith_static.lo `test -f 'arith_static.c' || echo '$(srcdir)/'`arith_static.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstaden_read_la-arith_static.Tpo $(DEPDIR)/libstaden_read_la-arith_static.Plo
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='arith_static.c' object='libstaden_read_la-arith_static.lo' libtool=yes @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-arith_static.lo `test -f 'arith_static.c' || echo '$(srcdir)/'`arith_static.c
-
 libstaden_read_la-rANS_static.lo: rANS_static.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libstaden_read_la-rANS_static.lo -MD -MP -MF $(DEPDIR)/libstaden_read_la-rANS_static.Tpo -c -o libstaden_read_la-rANS_static.lo `test -f 'rANS_static.c' || echo '$(srcdir)/'`rANS_static.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstaden_read_la-rANS_static.Tpo $(DEPDIR)/libstaden_read_la-rANS_static.Plo
@@ -961,6 +960,13 @@ libstaden_read_la-md5.lo: md5.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-md5.lo `test -f 'md5.c' || echo '$(srcdir)/'`md5.c
 
+libstaden_read_la-crc32.lo: crc32.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libstaden_read_la-crc32.lo -MD -MP -MF $(DEPDIR)/libstaden_read_la-crc32.Tpo -c -o libstaden_read_la-crc32.lo `test -f 'crc32.c' || echo '$(srcdir)/'`crc32.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstaden_read_la-crc32.Tpo $(DEPDIR)/libstaden_read_la-crc32.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='crc32.c' object='libstaden_read_la-crc32.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-crc32.lo `test -f 'crc32.c' || echo '$(srcdir)/'`crc32.c
+
 libstaden_read_la-scram.lo: scram.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libstaden_read_la-scram.lo -MD -MP -MF $(DEPDIR)/libstaden_read_la-scram.Tpo -c -o libstaden_read_la-scram.lo `test -f 'scram.c' || echo '$(srcdir)/'`scram.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstaden_read_la-scram.Tpo $(DEPDIR)/libstaden_read_la-scram.Plo
@@ -974,6 +980,20 @@ libstaden_read_la-thread_pool.lo: thread_pool.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='thread_pool.c' object='libstaden_read_la-thread_pool.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-thread_pool.lo `test -f 'thread_pool.c' || echo '$(srcdir)/'`thread_pool.c
+
+libstaden_read_la-binning.lo: binning.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libstaden_read_la-binning.lo -MD -MP -MF $(DEPDIR)/libstaden_read_la-binning.Tpo -c -o libstaden_read_la-binning.lo `test -f 'binning.c' || echo '$(srcdir)/'`binning.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstaden_read_la-binning.Tpo $(DEPDIR)/libstaden_read_la-binning.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='binning.c' object='libstaden_read_la-binning.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-binning.lo `test -f 'binning.c' || echo '$(srcdir)/'`binning.c
+
+libstaden_read_la-cram_bambam.lo: cram_bambam.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libstaden_read_la-cram_bambam.lo -MD -MP -MF $(DEPDIR)/libstaden_read_la-cram_bambam.Tpo -c -o libstaden_read_la-cram_bambam.lo `test -f 'cram_bambam.c' || echo '$(srcdir)/'`cram_bambam.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstaden_read_la-cram_bambam.Tpo $(DEPDIR)/libstaden_read_la-cram_bambam.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='cram_bambam.c' object='libstaden_read_la-cram_bambam.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstaden_read_la_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libstaden_read_la-cram_bambam.lo `test -f 'cram_bambam.c' || echo '$(srcdir)/'`cram_bambam.c
 
 mostlyclean-libtool:
 	-rm -f *.lo

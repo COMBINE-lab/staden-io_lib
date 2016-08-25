@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Genome Research Ltd.
+ * Copyright (c) 2013, 2014, 2015 Genome Research Ltd.
  * Author(s): James Bonfield
  * 
  * Redistribution and use in source and binary forms, with or without 
@@ -108,6 +108,112 @@ int itf8_put(char *cp, int32_t val);
 
 #endif
 
+int ltf8_put(char *cp, int64_t val);
+
+/* Version of itf8_get that checks it hasn't run out of input */
+
+extern const int itf8_bytes[16];
+extern const int ltf8_bytes[256];
+
+static inline int safe_itf8_get(const char *cp, const char *endp,
+				int32_t *val_p) {
+    const unsigned char *up = (unsigned char *)cp;
+
+    if (endp - cp < 5 &&
+	(cp >= endp || endp - cp < itf8_bytes[up[0]>>4])) {
+        *val_p = 0;
+        return 0;
+    }
+
+    if (up[0] < 0x80) {
+	*val_p =   up[0];
+	return 1;
+    } else if (up[0] < 0xc0) {
+	*val_p = ((up[0] <<8) |  up[1])                           & 0x3fff;
+	return 2;
+    } else if (up[0] < 0xe0) {
+	*val_p = ((up[0]<<16) | (up[1]<< 8) |  up[2])             & 0x1fffff;
+	return 3;
+    } else if (up[0] < 0xf0) {
+	*val_p = ((up[0]<<24) | (up[1]<<16) | (up[2]<<8) | up[3]) & 0x0fffffff;
+	return 4;
+    } else {
+	*val_p = ((up[0] & 0x0f)<<28) | (up[1]<<20) | (up[2]<<12) | (up[3]<<4) | (up[4] & 0x0f);
+	return 5;
+    }
+}
+
+static inline int safe_ltf8_get(const char *cp, const char *endp,
+                                int64_t *val_p) {
+    unsigned char *up = (unsigned char *)cp;
+
+    if (endp - cp < 9 && 
+	(cp >= endp || endp - cp < ltf8_bytes[up[0]])) return 0;
+
+    if (up[0] < 0x80) {
+	*val_p =   up[0];
+	return 1;
+    } else if (up[0] < 0xc0) {
+	*val_p = (((uint64_t)up[0]<< 8) |
+		   (uint64_t)up[1]) & (((1LL<<(6+8)))-1);
+	return 2;
+    } else if (up[0] < 0xe0) {
+	*val_p = (((uint64_t)up[0]<<16) |
+		  ((uint64_t)up[1]<< 8) |
+		   (uint64_t)up[2]) & ((1LL<<(5+2*8))-1);
+	return 3;
+    } else if (up[0] < 0xf0) {
+	*val_p = (((uint64_t)up[0]<<24) |
+		  ((uint64_t)up[1]<<16) |
+		  ((uint64_t)up[2]<< 8) |
+		   (uint64_t)up[3]) & ((1LL<<(4+3*8))-1);
+	return 4;
+    } else if (up[0] < 0xf8) {
+	*val_p = (((uint64_t)up[0]<<32) |
+		  ((uint64_t)up[1]<<24) |
+		  ((uint64_t)up[2]<<16) |
+		  ((uint64_t)up[3]<< 8) |
+		   (uint64_t)up[4]) & ((1LL<<(3+4*8))-1);
+	return 5;
+    } else if (up[0] < 0xfc) {
+	*val_p = (((uint64_t)up[0]<<40) |
+		  ((uint64_t)up[1]<<32) |
+		  ((uint64_t)up[2]<<24) |
+		  ((uint64_t)up[3]<<16) |
+		  ((uint64_t)up[4]<< 8) |
+		   (uint64_t)up[5]) & ((1LL<<(2+5*8))-1);
+	return 6;
+    } else if (up[0] < 0xfe) {
+	*val_p = (((uint64_t)up[0]<<48) |
+		  ((uint64_t)up[1]<<40) |
+		  ((uint64_t)up[2]<<32) |
+		  ((uint64_t)up[3]<<24) |
+		  ((uint64_t)up[4]<<16) |
+		  ((uint64_t)up[5]<< 8) |
+		   (uint64_t)up[6]) & ((1LL<<(1+6*8))-1);
+	return 7;
+    } else if (up[0] < 0xff) {
+	*val_p = (((uint64_t)up[1]<<48) |
+		  ((uint64_t)up[2]<<40) |
+		  ((uint64_t)up[3]<<32) |
+		  ((uint64_t)up[4]<<24) |
+		  ((uint64_t)up[5]<<16) |
+		  ((uint64_t)up[6]<< 8) |
+		   (uint64_t)up[7]) & ((1LL<<(7*8))-1);
+	return 8;
+    } else {
+	*val_p = (((uint64_t)up[1]<<56) |
+		  ((uint64_t)up[2]<<48) |
+		  ((uint64_t)up[3]<<40) |
+		  ((uint64_t)up[4]<<32) |
+		  ((uint64_t)up[5]<<24) |
+		  ((uint64_t)up[6]<<16) |
+		  ((uint64_t)up[7]<< 8) |
+		   (uint64_t)up[8]);
+	return 9;
+    }
+}
+
 /*! Pushes a value in ITF8 format onto the end of a block.
  *
  * This shouldn't be used for high-volume data as it is not the fastest
@@ -185,6 +291,23 @@ cram_metrics *cram_new_metrics(void);
 char *cram_block_method2str(enum cram_block_method m);
 char *cram_content_type2str(enum cram_content_type t);
 
+/*
+ * Find an external block by its content_id
+ */
+static inline cram_block *cram_get_block_by_id(cram_slice *slice, int id) {
+    if (slice->block_by_id && id >= 0 && id < 1024) {
+        return slice->block_by_id[id];
+    } else {
+        int i;
+        for (i = 0; i < slice->hdr->num_blocks; i++) {
+            cram_block *b = slice->block[i];
+            if (b && b->content_type == EXTERNAL && b->content_id == id)
+                return b;
+        }
+    }
+    return NULL;
+}
+
 /* --- Accessor macros for manipulating blocks on a byte by byte basis --- */
 
 /* Block size and data pointer. */
@@ -201,6 +324,13 @@ char *cram_content_type2str(enum cram_content_type t);
 	    (b)->alloc = (b)->alloc ? (b)->alloc*1.5 : 1024;	\
 	    (b)->data = realloc((b)->data, (b)->alloc);		\
 	}							\
+     } while(0)
+
+/* Make block exactly 'l' bytes long */
+#define BLOCK_RESIZE_EXACT(b,l)					\
+    do {							\
+        (b)->alloc = (l);                                       \
+        (b)->data = realloc((b)->data, (b)->alloc);		\
      } while(0)
 
 /* Ensure the block can hold at least another 'l' bytes */
@@ -229,6 +359,76 @@ char *cram_content_type2str(enum cram_content_type t);
 	cp = &(b)->data[(b)->byte];                  \
 	(b)->byte += append_uint(cp, (i)) - cp;	     \
     } while (0)
+
+static inline unsigned char *append_uint32(unsigned char *cp, uint32_t i) {
+    uint32_t j;
+
+    if (i == 0) {
+	*cp++ = '0';
+	return cp;
+    }
+
+    if (i < 100)        goto b1;
+    if (i < 10000)      goto b3;
+    if (i < 1000000)    goto b5;
+    if (i < 100000000)  goto b7;
+
+    if ((j = i / 1000000000)) {*cp++ = j + '0'; i -= j*1000000000; goto x8;}
+    if ((j = i / 100000000))  {*cp++ = j + '0'; i -= j*100000000;  goto x7;}
+ b7:if ((j = i / 10000000))   {*cp++ = j + '0'; i -= j*10000000;   goto x6;}
+    if ((j = i / 1000000))    {*cp++ = j + '0', i -= j*1000000;    goto x5;}
+ b5:if ((j = i / 100000))     {*cp++ = j + '0', i -= j*100000;     goto x4;}
+    if ((j = i / 10000))      {*cp++ = j + '0', i -= j*10000;      goto x3;}
+ b3:if ((j = i / 1000))       {*cp++ = j + '0', i -= j*1000;       goto x2;}
+    if ((j = i / 100))        {*cp++ = j + '0', i -= j*100;        goto x1;}
+ b1:if ((j = i / 10))         {*cp++ = j + '0', i -= j*10;         goto x0;}
+    if (i)                     *cp++ = i + '0';
+    return cp;
+
+ x8: *cp++ = i / 100000000 + '0', i %= 100000000;
+ x7: *cp++ = i / 10000000  + '0', i %= 10000000;
+ x6: *cp++ = i / 1000000   + '0', i %= 1000000;
+ x5: *cp++ = i / 100000    + '0', i %= 100000;
+ x4: *cp++ = i / 10000     + '0', i %= 10000;
+ x3: *cp++ = i / 1000      + '0', i %= 1000;
+ x2: *cp++ = i / 100       + '0', i %= 100;
+ x1: *cp++ = i / 10        + '0', i %= 10;
+ x0: *cp++ = i             + '0';
+
+    return cp;
+}
+
+static inline unsigned char *append_sub32(unsigned char *cp, uint32_t i) {
+    *cp++ = i / 100000000 + '0', i %= 100000000;
+    *cp++ = i / 10000000  + '0', i %= 10000000;
+    *cp++ = i / 1000000   + '0', i %= 1000000;
+    *cp++ = i / 100000    + '0', i %= 100000;
+    *cp++ = i / 10000     + '0', i %= 10000;
+    *cp++ = i / 1000      + '0', i %= 1000;
+    *cp++ = i / 100       + '0', i %= 100;
+    *cp++ = i / 10        + '0', i %= 10;
+    *cp++ = i             + '0';
+
+    return cp;
+}
+
+static inline unsigned char *append_uint64(unsigned char *cp, uint64_t i) {
+    uint64_t j;
+
+    if (i <= 0xffffffff)
+	return append_uint32(cp, i);
+
+    if ((j = i/1000000000) > 1000000000) {
+	cp = append_uint32(cp, j/1000000000);
+	j %= 1000000000;
+	cp = append_sub32(cp, j);
+    } else {
+	cp = append_uint32(cp, i / 1000000000);
+    }
+    cp = append_sub32(cp, i % 1000000000);
+
+    return cp;
+}
 
 #define BLOCK_UPLEN(b)			\
     (b)->comp_size = (b)->uncomp_size = BLOCK_SIZE((b))
@@ -457,6 +657,14 @@ int cram_close(cram_fd *fd);
  */
 int cram_flush(cram_fd *fd);
 
+/*
+ * Writes an EOF block to a CRAM file.
+ *
+ * Returns 0 on success
+ *        -1 on failure
+ */
+int cram_write_eof_block(cram_fd *fd);
+
 /*! Checks for end of file on a cram_fd stream.
  *
  * @return
@@ -487,6 +695,56 @@ int cram_set_option(cram_fd *fd, enum cram_option opt, ...);
  *        -1 on failure
  */
 int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args);
+
+#if defined(CRAM_IO_CUSTOM_BUFFERING)
+/*
+ * Opens a CRAM file for input via callbacks
+ *
+ * Returns file handle on success
+ *         NULL on failure.
+ */
+extern cram_fd *cram_open_by_callbacks(
+    char const * filename,
+    cram_io_allocate_read_input_t   callback_allocate_function,
+    cram_io_deallocate_read_input_t callback_deallocate_function,
+    size_t const bufsize
+);
+
+extern cram_fd * cram_openw_by_callbacks(
+    char const * filename,
+    cram_io_allocate_write_output_t   callback_allocate_function,
+    cram_io_deallocate_write_output_t callback_deallocate_function,
+    size_t const bufsize
+);
+
+extern cram_fd * cram_io_open(
+	char const * filename, 
+	char const * mode, 
+	char const * fmode
+);
+extern cram_fd * cram_io_open_by_callbacks(
+    char const * filename,
+    cram_io_allocate_read_input_t   callback_allocate_function,
+    cram_io_deallocate_read_input_t callback_deallocate_function,
+    size_t const bufsize,
+    int const decompress
+);
+
+extern cram_fd * cram_io_openw_by_callbacks(
+    char const * filename,
+    cram_io_allocate_write_output_t   callback_allocate_function,
+    cram_io_deallocate_write_output_t callback_deallocate_function,
+    size_t const bufsize
+);
+
+extern cram_fd * cram_io_close(cram_fd * fd, int * fclose_result);
+
+extern cram_fd_output_buffer *
+cram_io_deallocate_output_buffer(cram_fd_output_buffer * buffer);
+
+extern cram_fd_output_buffer *
+cram_io_allocate_output_buffer(size_t const bufsize);
+#endif
 
 /**@}*/
 
